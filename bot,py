@@ -1,0 +1,88 @@
+from config import *
+from logic import *
+import discord
+from discord.ext import commands
+from config import TOKEN
+import os
+import tempfile
+
+# Menginisiasi pengelola database
+manager = DB_Map("database.db")
+
+bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+
+@bot.event
+async def on_ready():
+    print("Bot started")
+
+@bot.command()
+async def start(ctx: commands.Context):
+    await ctx.send(f"Halo, {ctx.author.name}. Masukkan !help_me untuk mengeksplorasi daftar perintah yang tersedia")
+
+@bot.command()
+async def help_me(ctx: commands.Context):
+    await ctx.send(
+"""
+!start - memulai
+!help_me - menampilkan perintah yang tersedia
+!show_city city_name [warna] - menampilkan kota pada peta
+!show_my_cities [warna] - menampilkan daftar kota yang tersimpan
+!remember_city - menyimpan kota
+
+Contoh: !show_city Jakarta blue
+Warna yang umum: red, blue, green, yellow, orange, purple
+"""
+    )
+
+@bot.command()
+async def show_city(ctx: commands.Context, *, city_and_color=""):
+    # Memisahkan warna terakhir agar nama kota boleh terdiri dari beberapa kata.
+    city_and_color = city_and_color.strip()
+    if not city_and_color:
+        await ctx.send("Masukkan nama kota, misalnya `!show_city Jakarta blue`.")
+        return
+
+    parts = city_and_color.rsplit(maxsplit=1)
+    if len(parts) == 2:
+        city_name, marker_color = parts
+    else:
+        city_name, marker_color = parts[0], "red"
+
+    marker_color = marker_color.lower()
+    city_name = city_name.strip()
+    temporary_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    temporary_file.close()
+    try:
+        manager.create_graph(temporary_file.name, [city_name], marker_color)
+        await ctx.send(
+            content=f"Peta {city_name} dengan marker warna {marker_color}:",
+            file=discord.File(temporary_file.name, filename="kota.png"),
+        )
+    except (OSError, ValueError) as error:
+        await ctx.send(f"Peta tidak dapat dibuat: {error}")
+    finally:
+        if os.path.exists(temporary_file.name):
+            os.unlink(temporary_file.name)
+
+@bot.command()
+async def show_my_cities(ctx: commands.Context, marker_color="red"):
+    cities = manager.select_cities(ctx.author.id)  # Mengambil daftar kota yang diingat oleh pengguna
+
+    temporary_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    temporary_file.close()
+    try:
+        manager.create_graph(temporary_file.name, cities, marker_color.lower())
+        await ctx.send(file=discord.File(temporary_file.name, filename="my_cities.png"))
+    finally:
+        if os.path.exists(temporary_file.name):
+            os.unlink(temporary_file.name)
+
+@bot.command()
+async def remember_city(ctx: commands.Context, *, city_name=""):
+    if manager.add_city(ctx.author.id, city_name):  # Memeriksa apakah kota ada dalam database; jika ya, menambahkannya ke memori pengguna
+        await ctx.send(f'Kota {city_name} telah berhasil disimpan!')
+    else:
+        await ctx.send("Format tidak benar. Silakan masukkan nama kota dalam bahasa Inggris, dengan spasi setelah perintah.")
+
+if __name__ == "__main__":
+    bot.run(TOKEN)
